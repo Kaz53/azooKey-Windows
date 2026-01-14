@@ -8,7 +8,12 @@ fn debug_log(msg: &str) {
         .append(true)
         .open("G:/Projects/azooKey-Windows/logs/debug.log")
     {
-        let _ = writeln!(file, "[{}] {}", chrono::Local::now().format("%H:%M:%S%.3f"), msg);
+        let _ = writeln!(
+            file,
+            "[{}] {}",
+            chrono::Local::now().format("%H:%M:%S%.3f"),
+            msg
+        );
     }
 }
 
@@ -63,7 +68,10 @@ impl ITfTextInputProcessor_Impl for TextServiceFactory_Impl {
                 // Don't return early - continue activation without IPC
                 // The IME will try to reconnect when the user types
                 debug_log(&format!("Failed to initialize IPC service: {:?}", e));
-                tracing::warn!("Failed to initialize IPC service: {:?}. Will retry on input.", e);
+                tracing::warn!(
+                    "Failed to initialize IPC service: {:?}. Will retry on input.",
+                    e
+                );
             }
         }
 
@@ -98,14 +106,13 @@ impl ITfTextInputProcessor_Impl for TextServiceFactory_Impl {
                 .insert(ITfThreadMgrEventSink::IID, cookie);
         };
 
-        // Set default input mode to Kana (Japanese) when IME activates
-        // This ensures Japanese input works immediately after switching to Azookey
+        // Set default input mode to Latin (English) when IME activates
         {
             use crate::engine::input_mode::InputMode;
             let mut ime_state = IMEState::get()?;
-            ime_state.input_mode = InputMode::Kana;
-            debug_log("Set input mode to Kana");
-            tracing::debug!("Set input mode to Kana");
+            ime_state.input_mode = InputMode::Latin;
+            debug_log("Set input mode to Latin");
+            tracing::debug!("Set input mode to Latin");
         }
 
         // initialize text layout sink
