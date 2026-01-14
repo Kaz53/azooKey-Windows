@@ -279,7 +279,7 @@ async fn main() -> anyhow::Result<()> {
 
                             let height = candidate_window.inner_size().height as i32;
                             candidate_window.set_inner_size(PhysicalSize::new(
-                                max(225, 120 + max_len * 18),
+                                max(280, 140 + max_len * 24),
                                 height as u32,
                             ));
 
