@@ -266,7 +266,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Kill existing server to allow clean restart
     let current_pid = std::process::id();
     let kill_result = Command::new("taskkill")
-        .args(["/F", "/IM", "azookey-server.exe", "/FI", &format!("PID ne {}", current_pid)])
+        .args([
+            "/F",
+            "/IM",
+            "azookey-server.exe",
+            "/FI",
+            &format!("PID ne {}", current_pid),
+        ])
         .output();
     if let Ok(output) = &kill_result {
         if output.status.success() {

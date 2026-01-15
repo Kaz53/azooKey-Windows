@@ -147,7 +147,10 @@ impl TextServiceFactory {
         };
 
         // Debug: log key event info
-        debug_log(&format!("process_key: wparam={}, mode={:?}, state={:?}", wparam.0, mode, composition.state));
+        debug_log(&format!(
+            "process_key: wparam={}, mode={:?}, state={:?}",
+            wparam.0, mode, composition.state
+        ));
 
         let action = UserAction::try_from(wparam.0)?;
         debug_log(&format!("action: {:?}", action));
@@ -431,9 +434,7 @@ impl TextServiceFactory {
                         }
                     }
                 }
-                ipc_service
-                    .as_mut()
-                    .context("IPC service not available")
+                ipc_service.as_mut().context("IPC service not available")
             }};
         }
 
@@ -443,7 +444,11 @@ impl TextServiceFactory {
         // TODO: Re-enable for non-Qt apps if needed
         // self.update_context(&preview)?;
 
-        debug_log(&format!("handle_action: actions={:?}, ipc_available={}", actions, ipc_service.is_some()));
+        debug_log(&format!(
+            "handle_action: actions={:?}, ipc_available={}",
+            actions,
+            ipc_service.is_some()
+        ));
 
         // Helper macro to try IPC but continue on failure (for optional IPC calls)
         macro_rules! try_ipc {
@@ -466,7 +471,8 @@ impl TextServiceFactory {
                     // Learn the selected candidate if there was a valid selection
                     if !candidates.texts.is_empty()
                         && (selection_index as usize) < candidates.texts.len()
-                        && !preview.is_empty() {
+                        && !preview.is_empty()
+                    {
                         try_ipc!(|ipc: &mut IPCService| ipc.learn_candidate(selection_index));
                     }
 
@@ -497,7 +503,8 @@ impl TextServiceFactory {
                         let sub_text = candidates.sub_texts[selection_index as usize].clone();
                         let hiragana = candidates.hiragana.clone();
 
-                        corresponding_count = candidates.corresponding_count[selection_index as usize];
+                        corresponding_count =
+                            candidates.corresponding_count[selection_index as usize];
 
                         preview = conv_text.clone();
                         suffix = sub_text.clone();
@@ -555,7 +562,10 @@ impl TextServiceFactory {
                         let mut chars: Vec<char> = raw_hiragana.chars().collect();
                         chars.pop();
                         raw_hiragana = chars.into_iter().collect();
-                        raw_input = raw_input.chars().take(raw_input.chars().count().saturating_sub(1)).collect();
+                        raw_input = raw_input
+                            .chars()
+                            .take(raw_input.chars().count().saturating_sub(1))
+                            .collect();
                         preview = raw_hiragana.clone();
                         suffix.clear();
                         corresponding_count = raw_hiragana.chars().count() as i32;

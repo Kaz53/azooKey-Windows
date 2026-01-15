@@ -14,6 +14,8 @@ import ffi
 
 // Store last conversion result for learning
 @MainActor var lastConversionResult: [Candidate] = []
+// Track offset of non-learnable candidates (user dict, date/time) added before mainResults
+@MainActor var learnableOffset: Int = 0
 
 // MARK: - Reusable FFI Buffers (to prevent memory leaks)
 // These buffers are reused across calls instead of allocating new memory each time
@@ -79,6 +81,29 @@ let maxStringLen = 256
 let DEBUG_LOGGING_ENABLED = false
 // Set to true to enable performance logging to perf.log
 let PERF_LOGGING_ENABLED = false
+
+// Learning log file handle - writes to %APPDATA%/Azookey/learning.log
+@MainActor var learningLogHandle: FileHandle?
+
+@MainActor func initLearningLog() {
+    if let appDataPath = ProcessInfo.processInfo.environment["APPDATA"] {
+        let logPath = URL(filePath: appDataPath)
+            .appendingPathComponent("Azookey")
+            .appendingPathComponent("learning.log")
+        // Clear old log on startup
+        _ = FileManager.default.createFile(atPath: logPath.path, contents: nil)
+        learningLogHandle = try? FileHandle(forWritingTo: logPath)
+    }
+}
+
+@MainActor func learningLog(_ message: String) {
+    let logMessage = "[\(Date())] \(message)\n"
+    print(logMessage, terminator: "")  // Also print to stdout
+    if let data = logMessage.data(using: .utf8) {
+        learningLogHandle?.write(data)
+        try? learningLogHandle?.synchronize()  // Flush immediately for debugging
+    }
+}
 
 @MainActor func debugLog(_ message: String) {
     guard DEBUG_LOGGING_ENABLED else { return }
@@ -175,16 +200,27 @@ func getInputCount(_ count: ComposingCount) -> Int {
 func constructCandidateString(candidate: Candidate, hiragana: String) -> String {
     var remainingHiragana = hiragana
     var result = ""
-    
+
     for data in candidate.data {
         if remainingHiragana.count < data.ruby.count {
-            result += remainingHiragana
+            // When ruby is longer than remaining hiragana (e.g., candidate has period but input doesn't),
+            // use the word but truncated to match remaining characters, instead of falling back to hiragana.
+            // This ensures kanji candidates like '石川です。' still show as '石川です' when input is 'いしかわです'.
+            let charsToTake = remainingHiragana.count
+            if charsToTake > 0 && data.word.count >= charsToTake {
+                result += String(data.word.prefix(charsToTake))
+            } else if !data.word.isEmpty {
+                // If word is shorter than what we need, use the whole word
+                result += data.word
+            } else {
+                result += remainingHiragana
+            }
             break
         }
         remainingHiragana.removeFirst(data.ruby.count)
         result += data.word
     }
-    
+
     return result
 }
 
@@ -236,6 +272,9 @@ func constructCandidateString(candidate: Candidate, hiragana: String) -> String 
     if DEBUG_LOGGING_ENABLED {
         initLogFile()
     }
+    // Learning log disabled - was causing slowdown
+    // To debug learning, uncomment: initLearningLog()
+
     let path = String(cString: path)
     execURL = URL(filePath: path)
     debugLog("Initialize called, path: \(path)")
@@ -370,10 +409,13 @@ func constructCandidateString(candidate: Candidate, hiragana: String) -> String 
 
 @_silgen_name("ClearText")
 @MainActor public func clear_text() {
-    print("[CLEAR] Clearing all text and calling stopComposition()")
     composingText = ComposingText()
-    // Reset converter internal state to prevent slowdown from accumulated caches
-    converter.stopComposition()
+    // stopComposition() clears lattice cache but PRESERVES learning data (dicdataStoreState)
+    // This is needed so the next conversion uses fresh lattice with updated learning
+    // Guard against nil converter (can happen if called before initialize)
+    if converter != nil {
+        converter.stopComposition()
+    }
 }
 
 // Track conversion times for performance debugging
@@ -384,6 +426,9 @@ func constructCandidateString(candidate: Candidate, hiragana: String) -> String 
 @MainActor public func get_composed_text(lengthPtr: UnsafeMutablePointer<Int>) -> UnsafeMutablePointer<UnsafeMutablePointer<FFICandidate>?> {
     // Initialize buffers on first call
     initCandidateBuffers()
+
+    // Reset learnableOffset for this conversion (will be set after adding non-learnable entries)
+    learnableOffset = 0
 
     let hiragana = composingText.convertTarget
     debugLog("GetComposedText called, hiragana: '\(hiragana)'")
@@ -414,6 +459,9 @@ func constructCandidateString(candidate: Candidate, hiragana: String) -> String 
     }
 
     debugLog("mainResults count: \(converted.mainResults.count)")
+
+    // Logging disabled - was causing slowdown due to file I/O on every keystroke
+    // To debug learning, set LEARNING_LOG_ENABLED = true and rebuild
 
     // Store conversion result for learning
     lastConversionResult = converted.mainResults
@@ -521,6 +569,9 @@ func constructCandidateString(candidate: Candidate, hiragana: String) -> String 
         }
     }
 
+    // Track offset before adding learnable mainResults
+    learnableOffset = candidateIndex
+
     for i in 0..<converted.mainResults.count {
         let candidate = converted.mainResults[i]
         let text = constructCandidateString(candidate: candidate, hiragana: hiragana)
@@ -546,9 +597,7 @@ func constructCandidateString(candidate: Candidate, hiragana: String) -> String 
     afterComposingText.prefixComplete(composingCount: .inputCount(Int(offset)))
     composingText = afterComposingText
 
-    // Reset converter state when text is confirmed
-    print("[SHRINK] offset=\(offset), remaining='\(composingText.convertTarget)', calling stopComposition()")
-    converter.stopComposition()
+    // Note: Removed stopComposition() as it was clearing learning caches
 
     copyToBuffer(composingText.convertTarget, buffer: stringBuffer, maxLen: stringBufferSize)
     return stringBuffer
@@ -596,26 +645,24 @@ public func free_composed_text_result(
 
 @_silgen_name("LearnCandidate")
 @MainActor public func learn_candidate(candidateIndex: Int32) {
-    // Validate index
-    guard candidateIndex >= 0,
-          Int(candidateIndex) < lastConversionResult.count else {
-        print("[LEARN] Invalid candidate index: \(candidateIndex), available: \(lastConversionResult.count)")
-        return
-    }
+    // Adjust index by offset (user dict, date/time entries come before mainResults)
+    let adjustedIndex = Int(candidateIndex) - learnableOffset
 
-    let candidate = lastConversionResult[Int(candidateIndex)]
-    print("[LEARN] Learning candidate[\(candidateIndex)]: '\(candidate.text)'")
+    // Skip learning for non-learnable candidates (user dict, date/time)
+    guard adjustedIndex >= 0 else { return }
+
+    // Validate adjusted index
+    guard adjustedIndex < lastConversionResult.count else { return }
+
+    let candidate = lastConversionResult[adjustedIndex]
 
     // Update learning data
     converter.setCompletedData(candidate)
     converter.updateLearningData(candidate)
     converter.commitUpdateLearningData()
-
-    print("[LEARN] Learning committed successfully")
 }
 
 @_silgen_name("ResetLearningMemory")
 @MainActor public func reset_learning_memory() {
-    print("[LEARN] Resetting all learning memory")
     converter.resetMemory()
 }

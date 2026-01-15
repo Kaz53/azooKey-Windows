@@ -130,16 +130,13 @@ impl IPCService {
 
         // Use timeout to prevent hanging when server crashes
         let mut client = self.azookey_client.clone();
-        let response = self
-            .runtime
-            .clone()
-            .block_on(async {
-                match time::timeout(IPC_TIMEOUT, client.append_text(request)).await {
-                    Ok(Ok(response)) => Ok(response),
-                    Ok(Err(status)) => Err(anyhow::anyhow!("gRPC error: {}", status)),
-                    Err(_elapsed) => Err(anyhow::anyhow!("IPC timeout: server may have crashed")),
-                }
-            })?;
+        let response = self.runtime.clone().block_on(async {
+            match time::timeout(IPC_TIMEOUT, client.append_text(request)).await {
+                Ok(Ok(response)) => Ok(response),
+                Ok(Err(status)) => Err(anyhow::anyhow!("gRPC error: {}", status)),
+                Err(_elapsed) => Err(anyhow::anyhow!("IPC timeout: server may have crashed")),
+            }
+        })?;
         let composing_text = response.into_inner().composing_text;
 
         let candidates = if let Some(composing_text) = composing_text {
